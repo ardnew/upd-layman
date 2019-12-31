@@ -9,9 +9,14 @@
 
 // ----------------------------------------------------------------- includes --
 
+#include <Wire.h>
+
+#include <Adafruit_INA260.h>
+
 #include <LayoutManager.h>
 
 #include "src/global.h"
+#include "src/PowerMeter.h"
 
 // ------------------------------------------------------------------ defines --
 
@@ -19,10 +24,15 @@
 #define COLOR_ACCENT COLOR_CYAN
 #define COLOR_HILITE COLOR_WHITE
 
+// --------------------------------------------------------- private typedefs --
+
+
 // -------------------------------------------------------- private variables --
 
 void initGPIO(void);
 void initPeripherals(void);
+
+// ---- TFT DISPLAY ----
 
 LayoutManager *man;
 
@@ -40,8 +50,21 @@ Field *powerField;
 Panel *cablePanel;
 Field *cableField;
 
+// ---- VOLTAGE/CURRENT SENSOR ----
+
+PowerMeter *meter;
+
 void setup()
 {
+  initGPIO();
+  initPeripherals();
+
+  meter = new PowerMeter();
+  if (!meter->deviceReady()) {
+    Serial.printf("failed to initialize power sensor\n");
+    while (1) { delay(1000); }
+  }
+
   // screen size
   uint16_t width = 320;
   uint16_t height = 240;
@@ -113,7 +136,7 @@ void setup()
   powerPanel->setPadding(0);
 
   powerField = man->addField(powerPanel,
-      "20V 1.5A",
+      "--",
       3,
       COLOR_HILITE,
       radius,
@@ -132,7 +155,7 @@ void setup()
   cablePanel->setPadding(0);
 
   cableField = man->addField(cablePanel,
-      "CC1 Connected",
+      "--",
       1,
       COLOR_ACCENT,
       radius,
@@ -140,16 +163,26 @@ void setup()
   );
 
   if (man->begin()) {
-    INFO("ILI9341-Layout-Manager v%s", man->version());
+    Serial.printf("ILI9341-Layout-Manager v%s\n", man->version());
   }
   else {
-    BAIL("failed to initialize layout manager");
+    Serial.printf("failed to initialize layout manager\n");
+    while (1) { delay(1000); }
   }
 }
 
 void loop()
 {
+  uint32_t time = millis();
+
   man->draw();
+
+  if (meter->ready(time)) {
+    static char powerBuf[64] = { '\0' };
+    snprintf(powerBuf, 64, "%s %s",
+        meter->voltageStr().c_str(), meter->currentStr().c_str());
+    powerField->setText(powerBuf);
+  }
 }
 
 // --------------------------------------------------------- private routines --
@@ -171,7 +204,10 @@ void initPeripherals(void)
 #if defined(WAIT_FOR_SERIAL)
   while (!Serial) { continue; }
 #else
-  while (!Serial && millis() < 1000) { continue; }
+  while (!Serial && millis() < 2000) { continue; }
 #endif
-  Serial.begin(SERIAL_BAUD);
+  Serial.begin(SERIAL_BAUD_RATE_BPS);
+
+  Wire.setClock(I2C_CLOCK_FREQ_HZ);
+
 }
