@@ -14,14 +14,15 @@
 #include <Adafruit_INA260.h>
 
 #include <LayoutManager.h>
+#include <STUSB4500.h>
 
 #include "src/global.h"
 #include "src/PowerMeter.h"
 
 // ------------------------------------------------------------------ defines --
 
-#define COLOR_BORDER COLOR_NAVY
-#define COLOR_ACCENT COLOR_CYAN
+#define COLOR_PANEL  COLOR_NAVY
+#define COLOR_TEXT   COLOR_CYAN
 #define COLOR_HILITE COLOR_WHITE
 
 // --------------------------------------------------------- private typedefs --
@@ -32,6 +33,20 @@
 void initGPIO(void);
 void initPeripherals(void);
 
+void usbpdCableAttached(void);
+void usbpdCableDetached(void);
+void usbpdCapabilitiesReceived(void);
+
+void updateCableField(void);
+
+// ---- VOLTAGE/CURRENT SENSOR ----
+
+PowerMeter *meter;
+
+// ---- USB PD sink controller ----
+
+STUSB4500 *usbpd;
+
 // ---- TFT DISPLAY ----
 
 LayoutManager *man;
@@ -41,8 +56,9 @@ Field *resetField;
 Field *setPowerField;
 
 Panel *srcCapPanel;
+Field *srcCapField[NVM_SRC_PDO_MAX];
 
-Panel *snkCapPanel;
+Panel *usbDataPanel;
 
 Panel *powerPanel;
 Field *powerField;
@@ -50,9 +66,11 @@ Field *powerField;
 Panel *cablePanel;
 Field *cableField;
 
-// ---- VOLTAGE/CURRENT SENSOR ----
-
-PowerMeter *meter;
+// screen size
+static uint16_t const SCREEN_WIDTH  = 320;
+static uint16_t const SCREEN_HEIGHT = 240;
+static uint8_t  const PANEL_MARGIN  = 6;
+static uint8_t  const PANEL_RADIUS  = 6;
 
 void setup()
 {
@@ -65,22 +83,21 @@ void setup()
     while (1) { delay(1000); }
   }
 
-  // screen size
-  uint16_t width = 320;
-  uint16_t height = 240;
-  uint16_t margin = 6;
-  uint16_t radius = 6;
+  usbpd = new STUSB4500(USBPD_RST_PIN);
+  usbpd->setCableAttached(usbpdCableAttached);
+  usbpd->setCableDetached(usbpdCableDetached);
+  usbpd->setSourceCapabilitiesReceived(usbpdCapabilitiesReceived);
 
   man = new LayoutManager(
       TFT_CS_PIN, TFT_DC_PIN, TOUCH_CS_PIN, TOUCH_IRQ_PIN,
-      width, height, Orientation::Landscape, COLOR_BLACK);
+      SCREEN_WIDTH, SCREEN_HEIGHT, Orientation::Landscape, COLOR_BLACK);
 
   commandPanel = man->addPanel(0,
-      margin,
-      height - margin - 46,
-      width - 2 * margin,
+      PANEL_MARGIN,
+      SCREEN_HEIGHT - PANEL_MARGIN - 46,
+      SCREEN_WIDTH - 2 * PANEL_MARGIN,
       46,
-      radius, COLOR_BLACK
+      PANEL_RADIUS, COLOR_BLACK
   );
 
   commandPanel->setMargin(0);
@@ -89,47 +106,50 @@ void setup()
   resetField = man->addField(commandPanel,
       "Reset",
       2,
-      COLOR_ACCENT, COLOR_BORDER,
-      radius,
-      COLOR_BORDER, COLOR_ACCENT,
-      radius,
+      COLOR_TEXT, COLOR_PANEL,
+      PANEL_RADIUS,
+      COLOR_PANEL, COLOR_TEXT,
+      PANEL_RADIUS,
       0,
-      COLOR_ACCENT, COLOR_BORDER
+      COLOR_TEXT, COLOR_PANEL
   );
 
   setPowerField = man->addField(commandPanel,
       "Set Power",
       2,
-      COLOR_ACCENT, COLOR_BORDER,
-      radius,
-      COLOR_BORDER, COLOR_ACCENT,
-      radius,
+      COLOR_TEXT, COLOR_PANEL,
+      PANEL_RADIUS,
+      COLOR_PANEL, COLOR_TEXT,
+      PANEL_RADIUS,
       0,
-      COLOR_ACCENT, COLOR_BORDER
+      COLOR_TEXT, COLOR_PANEL
   );
 
   srcCapPanel = man->addPanel(0,
-      margin,
-      margin,
-      width - 2 * margin,
+      PANEL_MARGIN,
+      PANEL_MARGIN,
+      SCREEN_WIDTH - 2 * PANEL_MARGIN,
       72,
-      radius, COLOR_BLACK, radius, 0, COLOR_ACCENT
+      PANEL_RADIUS, COLOR_BLACK, PANEL_RADIUS, 0, COLOR_TEXT
   );
 
-  snkCapPanel = man->addPanel(0,
-      width - margin - 110,
-      srcCapPanel->frame()->bottom() + margin,
+  srcCapPanel->setMargin(8);
+  srcCapPanel->setPadding(4);
+
+  usbDataPanel = man->addPanel(0,
+      SCREEN_WIDTH - PANEL_MARGIN - 110,
+      srcCapPanel->frame()->bottom() + PANEL_MARGIN,
       110,
-      commandPanel->frame()->top() - srcCapPanel->frame()->bottom() - 2 * margin,
-      radius, COLOR_BLACK, radius, 0, COLOR_ACCENT
+      commandPanel->frame()->top() - srcCapPanel->frame()->bottom() - 2 * PANEL_MARGIN,
+      PANEL_RADIUS, COLOR_BLACK, PANEL_RADIUS, 0, COLOR_TEXT
   );
 
   powerPanel = man->addPanel(0,
-      margin,
-      srcCapPanel->frame()->bottom() + margin + 28,
-      width - snkCapPanel->frame()->size().width() - 3 * margin,
+      PANEL_MARGIN,
+      srcCapPanel->frame()->bottom() + PANEL_MARGIN + 28,
+      SCREEN_WIDTH - usbDataPanel->frame()->size().width() - 3 * PANEL_MARGIN,
       32,
-      radius, COLOR_BLACK
+      PANEL_RADIUS, COLOR_TEXT
   );
 
   powerPanel->setMargin(0);
@@ -139,16 +159,16 @@ void setup()
       "--",
       3,
       COLOR_HILITE,
-      radius,
-      COLOR_BLACK//, radius, 0, COLOR_BORDER
+      PANEL_RADIUS,
+      COLOR_BLACK//, PANEL_RADIUS, 0, COLOR_PANEL
   );
 
   cablePanel = man->addPanel(0,
-      margin,
-      powerPanel->frame()->bottom() + margin,
+      PANEL_MARGIN,
+      powerPanel->frame()->bottom() + PANEL_MARGIN,
       powerPanel->frame()->size().width(),
       12,
-      radius, COLOR_BLACK
+      PANEL_RADIUS, COLOR_BLACK
   );
 
   cablePanel->setMargin(0);
@@ -157,16 +177,26 @@ void setup()
   cableField = man->addField(cablePanel,
       "--",
       1,
-      COLOR_ACCENT,
-      radius,
-      COLOR_BLACK//, radius, 0, COLOR_BORDER
+      COLOR_TEXT,
+      PANEL_RADIUS,
+      COLOR_BLACK//, PANEL_RADIUS, 0, COLOR_PANEL
   );
 
   if (man->begin()) {
     Serial.printf("ILI9341-Layout-Manager v%s\n", man->version());
   }
   else {
-    Serial.printf("failed to initialize layout manager\n");
+    Serial.printf("failed to initialize ILI9341-Layout-Manager\n");
+    while (1) { delay(1000); }
+  }
+
+  if (usbpd->begin(USBPD_ALRT_PIN, USBPD_ATCH_PIN)) {
+    Serial.printf("STUSB4500 v%s\n", usbpd->version());
+
+    updateCableField();
+  }
+  else {
+    Serial.printf("failed to initialize STUSB4500\n");
     while (1) { delay(1000); }
   }
 }
@@ -174,6 +204,8 @@ void setup()
 void loop()
 {
   uint32_t time = millis();
+
+  usbpd->update();
 
   man->draw();
 
@@ -208,6 +240,85 @@ void initPeripherals(void)
 #endif
   Serial.begin(SERIAL_BAUD_RATE_BPS);
 
-  Wire.setClock(I2C_CLOCK_FREQ_HZ);
+  asm(".global _printf_float"); // enable float support in snprintf()
+}
 
+void usbpdCableAttached(void)
+{
+  Serial.println("attached");
+
+  updateCableField();
+
+  usbpd->setPowerDefaultUSB();
+  usbpd->updateSinkCapabilities();
+  usbpd->requestSourceCapabilities();
+}
+
+void usbpdCableDetached(void)
+{
+  Serial.println("detached");
+
+  updateCableField();
+
+  srcCapPanel->clearFields();
+}
+
+void usbpdCapabilitiesReceived(void)
+{
+  Serial.println("source capabilities received:");
+
+  srcCapPanel->clearFields();
+
+#define PDO_STR_LEN 16
+  static char pdoStr[PDO_STR_LEN] = { '\0' };
+
+  size_t n = usbpd->sourcePDOCount();
+  for (size_t i = 0U; i < n; ++i) {
+    PDO pdo = usbpd->sourcePDO(i);
+    Serial.printf("  %u: %umV %umA\n",
+        pdo.number, pdo.voltage_mV, pdo.current_mA);
+
+    snprintf(pdoStr, PDO_STR_LEN, "%sV\n%sA",
+        String((float)pdo.voltage_mV / 1000.0F, 1).c_str(),
+        String((float)pdo.current_mA / 1000.0F, 1).c_str()
+    );
+
+    srcCapField[i] = man->addField(srcCapPanel,
+        pdoStr,
+        2,
+        COLOR_TEXT, COLOR_PANEL,
+        PANEL_RADIUS,
+        COLOR_PANEL, COLOR_TEXT
+    );
+  }
+#undef PDO_STR_LEN
+
+  Serial.println("sink capabilities:");
+
+  size_t m = usbpd->sinkPDOCount();
+  for (size_t i = 0U; i < m; ++i) {
+    PDO pdo = usbpd->sinkPDO(i);
+    Serial.printf("  %u: %umV %umA\n",
+        pdo.number, pdo.voltage_mV, pdo.current_mA);
+  }
+}
+
+void updateCableField(void)
+{
+  CableStatus cable = usbpd->cableStatus();
+
+  switch (cable) {
+    case CableStatus::CC1Connected:
+      cableField->setText("Connected (CC1)");
+      cableField->setColorText(COLOR_CYAN);
+      break;
+    case CableStatus::CC2Connected:
+      cableField->setText("Connected (CC2)");
+      cableField->setColorText(COLOR_CYAN);
+      break;
+    default:
+      cableField->setText("Not connected");
+      cableField->setColorText(COLOR_ORANGE);
+      break;
+  }
 }

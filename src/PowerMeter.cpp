@@ -82,39 +82,50 @@ bool PowerMeter::ready(uint32_t time)
   return false;
 }
 
+#define STR_LEN 16
 String PowerMeter::voltageStr() const
 {
-  float voltage;
+  static char str[STR_LEN] = { '\0' };
+
+  uint32_t voltage;
   if (_voltage_mV < 0)
-    { voltage = 0.0F; }
+    { voltage = 0U; }
   else
-    { voltage = (float)_voltage_mV; }
+    { voltage = (uint32_t)_voltage_mV; }
 
   String s;
   if (voltage < 1000U)
-    { s = String(voltage, 0) + "mV"; }
-  else
-    { s = String(voltage / 1000.0F, 1) + "V"; }
+    { s = String(voltage) + "mV"; }
+  else {
+    snprintf(str, STR_LEN, "%4.1fV", (float)voltage / 1000.0);
+    s = String(str);
+  }
 
   return s;
 }
 
 String PowerMeter::currentStr() const
 {
-  float current;
+  static char str[STR_LEN] = { '\0' };
+
+  uint32_t current;
   if (_current_mA < 0)
-    { current = 0.0F; }
+    { current = 0U; }
   else
-    { current = (float)_current_mA; }
+    { current = (uint32_t)_current_mA; }
 
   String s;
   if (current < 1000U)
-    { s = String(current, 0) + "mA"; }
-  else
-    { s = String(current / 1000.0F, 3) + "A"; }
+    { s = String(current) + "mA"; }
+  else {
+    current /= 10U;
+    snprintf(str, STR_LEN, "%.2gA", (float)current / 100.0);
+    s = String(str);
+  }
 
   return s;
 }
+#undef STR_LEN
 
 // -------------------------------------------------------- private functions --
 
