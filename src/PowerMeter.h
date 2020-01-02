@@ -32,8 +32,8 @@
 
 #define VOLTAGE_MIN_MV               0
 #define VOLTAGE_MAX_MV           25000
-#define CURRENT_MIN_MV               0
-#define CURRENT_MAX_MV            6000
+#define CURRENT_MIN_MA               0
+#define CURRENT_MAX_MA            6000
 
 // ------------------------------------------------------------------- macros --
 

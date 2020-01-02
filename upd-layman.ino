@@ -19,6 +19,10 @@
 #include "src/global.h"
 #include "src/PowerMeter.h"
 
+#include "src/font/DroidSansMonoDotted_8.h"
+#include "src/font/DroidSansMonoDotted_12.h"
+#include "src/font/DroidSansMonoDotted_14.h"
+
 // ------------------------------------------------------------------ defines --
 
 #define COLOR_PANEL  COLOR_NAVY
@@ -30,6 +34,8 @@
 
 // -------------------------------------------------------- private variables --
 
+static bool _outputEnable = false;
+
 void initGPIO(void);
 void initPeripherals(void);
 
@@ -38,6 +44,9 @@ void usbpdCableDetached(void);
 void usbpdCapabilitiesReceived(void);
 
 void updateCableField(void);
+
+void enableOutputPress(const Frame &frame, const Touch &touch);
+void enableOutput(bool const enable);
 
 // ---- VOLTAGE/CURRENT SENSOR ----
 
@@ -105,7 +114,8 @@ void setup()
 
   resetField = man->addField(commandPanel,
       "Reset",
-      2,
+      1,
+      &DroidSansMonoDotted12pt7b,
       COLOR_TEXT, COLOR_PANEL,
       PANEL_RADIUS,
       COLOR_PANEL, COLOR_TEXT,
@@ -116,7 +126,8 @@ void setup()
 
   setPowerField = man->addField(commandPanel,
       "Set Power",
-      2,
+      1,
+      &DroidSansMonoDotted12pt7b,
       COLOR_TEXT, COLOR_PANEL,
       PANEL_RADIUS,
       COLOR_PANEL, COLOR_TEXT,
@@ -124,6 +135,8 @@ void setup()
       0,
       COLOR_TEXT, COLOR_PANEL
   );
+
+  setPowerField->setTouchPress(enableOutputPress);
 
   srcCapPanel = man->addPanel(0,
       PANEL_MARGIN,
@@ -157,7 +170,8 @@ void setup()
 
   powerField = man->addField(powerPanel,
       "--",
-      3,
+      1,
+      &DroidSansMonoDotted14pt7b,
       COLOR_HILITE,
       PANEL_RADIUS,
       COLOR_BLACK//, PANEL_RADIUS, 0, COLOR_PANEL
@@ -229,6 +243,9 @@ void initGPIO(void)
   delay(100);
   digitalWrite(TFT_RST_PIN, HIGH);
 #endif
+
+  pinMode(OUTPUT_EN_PIN, OUTPUT);
+  enableOutput(_outputEnable);
 }
 
 void initPeripherals(void)
@@ -278,18 +295,21 @@ void usbpdCapabilitiesReceived(void)
     Serial.printf("  %u: %umV %umA\n",
         pdo.number, pdo.voltage_mV, pdo.current_mA);
 
-    snprintf(pdoStr, PDO_STR_LEN, "%sV\n%sA",
-        String((float)pdo.voltage_mV / 1000.0F, 1).c_str(),
-        String((float)pdo.current_mA / 1000.0F, 1).c_str()
+    snprintf(pdoStr, PDO_STR_LEN, "%.1fV\n%.1fA",
+        pdo.voltage_mV / 1000.0F,
+        pdo.current_mA / 1000.0F
     );
 
     srcCapField[i] = man->addField(srcCapPanel,
         pdoStr,
-        2,
+        1,
+        &DroidSansMonoDotted8pt7b,
         COLOR_TEXT, COLOR_PANEL,
         PANEL_RADIUS,
         COLOR_PANEL, COLOR_TEXT
     );
+
+    srcCapField[i]->setLineSpacing(2);
   }
 #undef PDO_STR_LEN
 
@@ -321,4 +341,20 @@ void updateCableField(void)
       cableField->setColorText(COLOR_ORANGE);
       break;
   }
+}
+
+void enableOutputPress(const Frame &frame, const Touch &touch)
+{
+  enableOutput(!_outputEnable);
+}
+
+void enableOutput(bool const enable)
+{
+  if (enable) {
+    digitalWrite(OUTPUT_EN_PIN, HIGH);
+  }
+  else {
+    digitalWrite(OUTPUT_EN_PIN, LOW);
+  }
+  _outputEnable = enable;
 }

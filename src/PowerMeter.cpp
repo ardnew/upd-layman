@@ -44,7 +44,7 @@
 PowerMeter::PowerMeter(void):
   _ina260(Adafruit_INA260()),
   _voltage_mV(VOLTAGE_MIN_MV),
-  _current_mA(CURRENT_MIN_MV),
+  _current_mA(CURRENT_MIN_MA),
   _time(0U),
   _deviceReady(false)
 {
@@ -59,9 +59,9 @@ bool PowerMeter::init(bool reset)
 
   _deviceReady = _ina260.begin();
   if (_deviceReady) {
-    _ina260.setCurrentConversionTime(INA260_TIME_1_1_ms);
-    _ina260.setVoltageConversionTime(INA260_TIME_1_1_ms);
-    _ina260.setAveragingCount(INA260_COUNT_256);
+    _ina260.setCurrentConversionTime(INA260_TIME_8_244_ms);
+    _ina260.setVoltageConversionTime(INA260_TIME_8_244_ms);
+    _ina260.setAveragingCount(INA260_COUNT_16);
     _ina260.setMode(INA260_MODE_TRIGGERED);
   }
 
@@ -93,15 +93,15 @@ String PowerMeter::voltageStr() const
   else
     { voltage = (uint32_t)_voltage_mV; }
 
-  String s;
   if (voltage < 1000U)
-    { s = String(voltage) + "mV"; }
-  else {
-    snprintf(str, STR_LEN, "%4.1fV", (float)voltage / 1000.0);
-    s = String(str);
-  }
+    { snprintf(str, STR_LEN, "%lumV", voltage); }
+  else if (voltage <= VOLTAGE_MAX_MV)
+    { snprintf(str, STR_LEN, "%4.1fV",
+        (float)voltage / 1000.0F); }
+  else
+    { snprintf(str, STR_LEN, "(O/V)"); }
 
-  return s;
+  return String(str);
 }
 
 String PowerMeter::currentStr() const
@@ -114,16 +114,15 @@ String PowerMeter::currentStr() const
   else
     { current = (uint32_t)_current_mA; }
 
-  String s;
   if (current < 1000U)
-    { s = String(current) + "mA"; }
-  else {
-    current /= 10U;
-    snprintf(str, STR_LEN, "%.2gA", (float)current / 100.0);
-    s = String(str);
-  }
+    { snprintf(str, STR_LEN, "%lumA", current); }
+  else if (current <= CURRENT_MAX_MA)
+    { snprintf(str, STR_LEN, "%.2gA",
+        (float)((uint32_t)(current / 10U)) / 100.0F); }
+  else
+    { snprintf(str, STR_LEN, "(O/C)"); }
 
-  return s;
+  return String(str);
 }
 #undef STR_LEN
 

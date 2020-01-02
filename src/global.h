@@ -54,6 +54,8 @@
 #define USBPD_ATCH_PIN     24
 #define USBPD_ALRT_PIN     26
 
+#define OUTPUT_EN_PIN      23
+
 // ------------------------------------------------------------------- macros --
 
 #define EXPAND(x) x ## 1
