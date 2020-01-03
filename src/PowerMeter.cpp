@@ -16,8 +16,12 @@
 
 // ---------------------------------------------------------- private defines --
 
-#define FORMAT_BUF_SIZE   32
-#define FORMAT_VAL_WIDTH  6
+#define CONTINUOUS_CONVERSION
+
+#define REFRESH_DEFAULT_MS  1000
+
+#define FORMAT_BUF_SIZE       32
+#define FORMAT_VAL_WIDTH       6
 
 // ----------------------------------------------------------- private macros --
 
@@ -46,6 +50,18 @@ PowerMeter::PowerMeter(void):
   _voltage_mV(VOLTAGE_MIN_MV),
   _current_mA(CURRENT_MIN_MA),
   _time(0U),
+  _refresh_ms(REFRESH_DEFAULT_MS),
+  _deviceReady(false)
+{
+  init(false);
+}
+
+PowerMeter::PowerMeter(float const refresh_hz):
+  _ina260(Adafruit_INA260()),
+  _voltage_mV(VOLTAGE_MIN_MV),
+  _current_mA(CURRENT_MIN_MA),
+  _time(0U),
+  _refresh_ms((uint32_t)(1.0F / refresh_hz * 1000.0F + 0.5F)),
   _deviceReady(false)
 {
   init(false);
@@ -59,10 +75,14 @@ bool PowerMeter::init(bool reset)
 
   _deviceReady = _ina260.begin();
   if (_deviceReady) {
+#if defined(CONTINUOUS_CONVERSION)
+    _ina260.setMode(INA260_MODE_CONTINUOUS);
+#else
     _ina260.setCurrentConversionTime(INA260_TIME_8_244_ms);
     _ina260.setVoltageConversionTime(INA260_TIME_8_244_ms);
     _ina260.setAveragingCount(INA260_COUNT_16);
     _ina260.setMode(INA260_MODE_TRIGGERED);
+#endif
   }
 
   return _deviceReady;
@@ -71,11 +91,18 @@ bool PowerMeter::init(bool reset)
 bool PowerMeter::ready(uint32_t time)
 {
   if (_deviceReady) {
+#if defined(CONTINUOUS_CONVERSION)
+    if (time - _time > _refresh_ms) {
+#else
     if (_ina260.conversionReady()) {
+#endif
+      Serial.printf("time=%lu, _time=%lu, _refresh_ms=%lu\n", time, _time, _refresh_ms);
       _voltage_mV = (int32_t)_ina260.readBusVoltage();
       _current_mA = (int32_t)_ina260.readCurrent();
       _time = time;
+#if !defined(CONTINUOUS_CONVERSION)
       _ina260.setMode(INA260_MODE_TRIGGERED);
+#endif
       return true;
     }
   }

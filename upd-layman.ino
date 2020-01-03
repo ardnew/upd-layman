@@ -17,6 +17,7 @@
 #include <STUSB4500.h>
 
 #include "src/global.h"
+#include "src/StatusLED.h"
 #include "src/PowerMeter.h"
 
 #include "src/font/DroidSansMonoDotted_8.h"
@@ -47,6 +48,10 @@ void updateCableField(void);
 
 void enableOutputPress(const Frame &frame, const Touch &touch);
 void enableOutput(bool const enable);
+
+// ---- status LED ----
+
+StatusLED *led;
 
 // ---- VOLTAGE/CURRENT SENSOR ----
 
@@ -86,13 +91,24 @@ void setup()
   initGPIO();
   initPeripherals();
 
-  meter = new PowerMeter();
+  led = new StatusLED(
+      DOTSTAR_DATA_PIN,
+      DOTSTAR_CLOCK_PIN,
+      StatusLEDMode::Fabulous,
+      true,
+      StatusRGB(CRGB::Green),
+      100,
+      5
+  );
+
+  meter = new PowerMeter(1.0);
   if (!meter->deviceReady()) {
     Serial.printf("failed to initialize power sensor\n");
     while (1) { delay(1000); }
   }
 
   usbpd = new STUSB4500(USBPD_RST_PIN);
+  usbpd->setMaxSourceCapabilityRequests(500);
   usbpd->setCableAttached(usbpdCableAttached);
   usbpd->setCableDetached(usbpdCableDetached);
   usbpd->setSourceCapabilitiesReceived(usbpdCapabilitiesReceived);
@@ -206,12 +222,11 @@ void setup()
 
   if (usbpd->begin(USBPD_ALRT_PIN, USBPD_ATCH_PIN)) {
     Serial.printf("STUSB4500 v%s\n", usbpd->version());
-
     updateCableField();
   }
   else {
     Serial.printf("failed to initialize STUSB4500\n");
-    while (1) { delay(1000); }
+    //while (1) { delay(1000); }
   }
 }
 
@@ -229,6 +244,8 @@ void loop()
         meter->voltageStr().c_str(), meter->currentStr().c_str());
     powerField->setText(powerBuf);
   }
+
+  led->update();
 }
 
 // --------------------------------------------------------- private routines --
@@ -264,10 +281,14 @@ void usbpdCableAttached(void)
 {
   Serial.println("attached");
 
+  if (!usbpd->started())
+    { (void)usbpd->begin(USBPD_ALRT_PIN, USBPD_ATCH_PIN); }
+
   updateCableField();
 
   usbpd->setPowerDefaultUSB();
   usbpd->updateSinkCapabilities();
+
   usbpd->requestSourceCapabilities();
 }
 

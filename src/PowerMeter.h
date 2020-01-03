@@ -48,10 +48,12 @@ private:
   int32_t _voltage_mV;
   int32_t _current_mA;
   uint32_t _time;
+  uint32_t _refresh_ms;
   bool _deviceReady;
 
 public:
   PowerMeter(void);
+  PowerMeter(float const refresh_hz);
   bool init(bool reset);
   bool ready(uint32_t time);
   int32_t voltage() const { return _voltage_mV; }

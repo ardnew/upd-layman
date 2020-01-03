@@ -54,7 +54,14 @@
 #define USBPD_ATCH_PIN     12
 #define USBPD_ALRT_PIN     13
 
+// MOSFET output switch
 #define OUTPUT_EN_PIN       9
+
+// on-board DotStar
+#define DOTSTAR_DATA_PIN    8
+#define DOTSTAR_CLOCK_PIN   6
+#define DOTSTAR_LED_COUNT   1
+#define DOTSTAR_RGB_ORDER BGR
 
 // ------------------------------------------------------------------- macros --
 
