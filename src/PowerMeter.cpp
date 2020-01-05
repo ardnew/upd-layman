@@ -96,7 +96,8 @@ bool PowerMeter::ready(uint32_t time)
 #else
     if (_ina260.conversionReady()) {
 #endif
-      Serial.printf("time=%lu, _time=%lu, _refresh_ms=%lu\n", time, _time, _refresh_ms);
+      //Serial.printf("time=%lu, _time=%lu, _refresh_ms=%lu\n",
+      //    time, _time, _refresh_ms);
       _voltage_mV = (int32_t)_ina260.readBusVoltage();
       _current_mA = (int32_t)_ina260.readCurrent();
       _time = time;

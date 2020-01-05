@@ -30,24 +30,32 @@
 #define COLOR_TEXT   COLOR_CYAN
 #define COLOR_HILITE COLOR_WHITE
 
+#define RESET_DELAY_MS  200
+
 // --------------------------------------------------------- private typedefs --
 
 
 // -------------------------------------------------------- private variables --
 
 static bool _outputEnable = false;
+static bool _applyMode = false;
 
 void initGPIO(void);
 void initPeripherals(void);
+
+void outputEnable(bool const enable);
 
 void usbpdCableAttached(void);
 void usbpdCableDetached(void);
 void usbpdCapabilitiesReceived(void);
 
 void updateCableField(void);
+void updateCapabilityFields(void);
 
-void enableOutputPress(const Frame &frame, const Touch &touch);
-void enableOutput(bool const enable);
+void outputEnablePress(const Frame &frame, const Touch &touch);
+void resetApplyPress(const Frame &frame, const Touch &touch);
+void capabilityPress(const Frame &frame, const Touch &touch);
+
 
 // ---- status LED ----
 
@@ -60,14 +68,16 @@ PowerMeter *meter;
 // ---- USB PD sink controller ----
 
 STUSB4500 *usbpd;
+PDO _requestedPDO;
+PDO _selectedPDO;
 
 // ---- TFT DISPLAY ----
 
 LayoutManager *man;
 
 Panel *commandPanel;
-Field *resetField;
-Field *setPowerField;
+Field *outputEnableField;
+Field *resetApplyField;
 
 Panel *srcCapPanel;
 Field *srcCapField[NVM_SRC_PDO_MAX];
@@ -108,7 +118,7 @@ void setup()
   }
 
   usbpd = new STUSB4500(USBPD_RST_PIN);
-  usbpd->setMaxSourceCapabilityRequests(500);
+  usbpd->setMaxSourceCapabilityRequests(200);
   usbpd->setCableAttached(usbpdCableAttached);
   usbpd->setCableDetached(usbpdCableDetached);
   usbpd->setSourceCapabilitiesReceived(usbpdCapabilitiesReceived);
@@ -124,11 +134,23 @@ void setup()
       46,
       PANEL_RADIUS, COLOR_BLACK
   );
-
   commandPanel->setMargin(0);
   commandPanel->setPadding(8);
 
-  resetField = man->addField(commandPanel,
+  outputEnableField = man->addField(commandPanel,
+      "--",
+      1,
+      &DroidSansMonoDotted12pt7b,
+      COLOR_TEXT, COLOR_PANEL,
+      PANEL_RADIUS,
+      COLOR_PANEL, COLOR_TEXT,
+      PANEL_RADIUS,
+      0,
+      COLOR_TEXT, COLOR_PANEL
+  );
+  outputEnableField->setTouchPress(outputEnablePress);
+
+  resetApplyField = man->addField(commandPanel,
       "Reset",
       1,
       &DroidSansMonoDotted12pt7b,
@@ -139,20 +161,7 @@ void setup()
       0,
       COLOR_TEXT, COLOR_PANEL
   );
-
-  setPowerField = man->addField(commandPanel,
-      "Set Power",
-      1,
-      &DroidSansMonoDotted12pt7b,
-      COLOR_TEXT, COLOR_PANEL,
-      PANEL_RADIUS,
-      COLOR_PANEL, COLOR_TEXT,
-      PANEL_RADIUS,
-      0,
-      COLOR_TEXT, COLOR_PANEL
-  );
-
-  setPowerField->setTouchPress(enableOutputPress);
+  resetApplyField->setTouchPress(resetApplyPress);
 
   srcCapPanel = man->addPanel(0,
       PANEL_MARGIN,
@@ -161,9 +170,9 @@ void setup()
       72,
       PANEL_RADIUS, COLOR_BLACK, PANEL_RADIUS, 0, COLOR_TEXT
   );
-
   srcCapPanel->setMargin(8);
   srcCapPanel->setPadding(4);
+  srcCapPanel->setAllowsMultipleSelection(false);
 
   usbDataPanel = man->addPanel(0,
       SCREEN_WIDTH - PANEL_MARGIN - 110,
@@ -180,7 +189,6 @@ void setup()
       32,
       PANEL_RADIUS, COLOR_TEXT
   );
-
   powerPanel->setMargin(0);
   powerPanel->setPadding(0);
 
@@ -200,7 +208,6 @@ void setup()
       12,
       PANEL_RADIUS, COLOR_BLACK
   );
-
   cablePanel->setMargin(0);
   cablePanel->setPadding(0);
 
@@ -222,12 +229,13 @@ void setup()
 
   if (usbpd->begin(USBPD_ALRT_PIN, USBPD_ATCH_PIN)) {
     Serial.printf("STUSB4500 v%s\n", usbpd->version());
-    updateCableField();
   }
   else {
     Serial.printf("failed to initialize STUSB4500\n");
-    //while (1) { delay(1000); }
   }
+
+  outputEnable(_outputEnable);
+  updateCableField();
 }
 
 void loop()
@@ -262,7 +270,7 @@ void initGPIO(void)
 #endif
 
   pinMode(OUTPUT_EN_PIN, OUTPUT);
-  enableOutput(_outputEnable);
+  digitalWrite(OUTPUT_EN_PIN, LOW); // make sure output is disabled on startup
 }
 
 void initPeripherals(void)
@@ -277,18 +285,39 @@ void initPeripherals(void)
   asm(".global _printf_float"); // enable float support in snprintf()
 }
 
+void outputEnable(bool const enable)
+{
+  char *buttonText;
+  if (enable) {
+    buttonText = "Disable";
+    digitalWrite(OUTPUT_EN_PIN, HIGH);
+  }
+  else {
+    buttonText = "Enable";
+    digitalWrite(OUTPUT_EN_PIN, LOW);
+  }
+  if (nullptr != outputEnableField) {
+    outputEnableField->setText(buttonText);
+  }
+  _outputEnable = enable;
+}
+
 void usbpdCableAttached(void)
 {
   Serial.println("attached");
 
-  if (!usbpd->started())
-    { (void)usbpd->begin(USBPD_ALRT_PIN, USBPD_ATCH_PIN); }
+  if (!usbpd->started()) {
+    (void)usbpd->begin(USBPD_ALRT_PIN, USBPD_ATCH_PIN);
+    delay(250);
+  }
 
   updateCableField();
 
-  usbpd->setPowerDefaultUSB();
+  if ((_selectedPDO.voltage_mV > 0U) && (_selectedPDO.current_mA > 0U))
+    { usbpd->setPower(_selectedPDO.voltage_mV, _selectedPDO.current_mA); }
+  else
+    { usbpd->setPowerDefaultUSB(); }
   usbpd->updateSinkCapabilities();
-
   usbpd->requestSourceCapabilities();
 }
 
@@ -303,6 +332,39 @@ void usbpdCableDetached(void)
 
 void usbpdCapabilitiesReceived(void)
 {
+  updateCapabilityFields();
+}
+
+void updateCableField(void)
+{
+  CableStatus cable = usbpd->cableStatus();
+
+  if (nullptr != cableField) {
+    switch (cable) {
+      case CableStatus::CC1Connected:
+        cableField->setText("Connected (CC1)");
+        cableField->setColorText(COLOR_CYAN);
+        break;
+      case CableStatus::CC2Connected:
+        cableField->setText("Connected (CC2)");
+        cableField->setColorText(COLOR_CYAN);
+        break;
+      default:
+        cableField->setText("Not connected");
+        cableField->setColorText(COLOR_ORANGE);
+        break;
+    }
+  }
+}
+
+void updateCapabilityFields(void)
+{
+  Serial.println("requested capability:");
+
+  _requestedPDO = usbpd->requestedPDO();
+  Serial.printf("  %u: %umV %umA\n",
+      _requestedPDO.number, _requestedPDO.voltage_mV, _requestedPDO.current_mA);
+
   Serial.println("source capabilities received:");
 
   srcCapPanel->clearFields();
@@ -321,16 +383,30 @@ void usbpdCapabilitiesReceived(void)
         pdo.current_mA / 1000.0F
     );
 
-    srcCapField[i] = man->addField(srcCapPanel,
-        pdoStr,
-        1,
-        &DroidSansMonoDotted8pt7b,
-        COLOR_TEXT, COLOR_PANEL,
-        PANEL_RADIUS,
-        COLOR_PANEL, COLOR_TEXT
-    );
+    if ((pdo == _requestedPDO) || (pdo == _selectedPDO)) {
+      srcCapField[i] = man->addField(srcCapPanel,
+          pdoStr,
+          1,
+          &DroidSansMonoDotted8pt7b,
+          COLOR_PANEL, COLOR_PANEL,
+          PANEL_RADIUS,
+          COLOR_HILITE, COLOR_TEXT
+      );
+    }
+    else {
+      srcCapField[i] = man->addField(srcCapPanel,
+          pdoStr,
+          1,
+          &DroidSansMonoDotted8pt7b,
+          COLOR_TEXT, COLOR_PANEL,
+          PANEL_RADIUS,
+          COLOR_PANEL, COLOR_TEXT
+      );
+    }
 
     srcCapField[i]->setLineSpacing(2);
+    srcCapField[i]->setIsMomentary(false);
+    srcCapField[i]->setTouchPress(capabilityPress);
   }
 #undef PDO_STR_LEN
 
@@ -344,38 +420,47 @@ void usbpdCapabilitiesReceived(void)
   }
 }
 
-void updateCableField(void)
+void outputEnablePress(const Frame &frame, const Touch &touch)
 {
-  CableStatus cable = usbpd->cableStatus();
-
-  switch (cable) {
-    case CableStatus::CC1Connected:
-      cableField->setText("Connected (CC1)");
-      cableField->setColorText(COLOR_CYAN);
-      break;
-    case CableStatus::CC2Connected:
-      cableField->setText("Connected (CC2)");
-      cableField->setColorText(COLOR_CYAN);
-      break;
-    default:
-      cableField->setText("Not connected");
-      cableField->setColorText(COLOR_ORANGE);
-      break;
-  }
+  outputEnable(!_outputEnable);
 }
 
-void enableOutputPress(const Frame &frame, const Touch &touch)
+void resetApplyPress(const Frame &frame, const Touch &touch)
 {
-  enableOutput(!_outputEnable);
-}
+  if (_applyMode) {
+    size_t n = usbpd->sourcePDOCount();
+    for (size_t i = 0U; i < n; ++i) {
+      if (srcCapField[i]->isSelected())
+        { _selectedPDO = usbpd->sourcePDO(i); }
+      srcCapField[i]->setIsSelected(false);
+    }
+    Serial.printf("SEL = (%u) %umV %umA\n",
+        _selectedPDO.number, _selectedPDO.voltage_mV, _selectedPDO.current_mA);
 
-void enableOutput(bool const enable)
-{
-  if (enable) {
-    digitalWrite(OUTPUT_EN_PIN, HIGH);
+    usbpd->setPower(_selectedPDO.voltage_mV, _selectedPDO.current_mA);
+
+    updateCapabilityFields();
+
+    resetApplyField->setText("Reset");
+    _applyMode = false;
   }
   else {
-    digitalWrite(OUTPUT_EN_PIN, LOW);
+    if (_outputEnable) {
+      outputEnable(false);
+      delay(RESET_DELAY_MS);
+    }
+    outputEnable(true);
   }
-  _outputEnable = enable;
+}
+
+void capabilityPress(const Frame &frame, const Touch &touch)
+{
+  if (frame.isSelected()) {
+    resetApplyField->setText("Apply");
+    _applyMode = true;
+  }
+  else {
+    resetApplyField->setText("Reset");
+    _applyMode = false;
+  }
 }
